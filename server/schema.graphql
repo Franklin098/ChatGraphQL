@@ -15,3 +15,7 @@ type Message {
 input MessageInput {
   text: String!
 }
+
+type Subscription {
+  messageAdded: Message
+}
