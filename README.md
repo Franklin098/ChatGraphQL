@@ -131,3 +131,208 @@ export const resolvers = {
 Testing using Apollo Server SandBox
 
 ![](./images/image1.png)
+
+### 4. Update Apollo Client in the Frontend
+
+In the client project:
+
+```
+npm install graphql-ws
+```
+
+Inside client.js:
+
+```
+import { ApolloClient, HttpLink, InMemoryCache, split } from "@apollo/client";
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
+import { createClient as createWSClient } from "graphql-ws";
+import { getMainDefinition } from "@apollo/client/utilities";
+import { Kind, OperationTypeNode } from "graphql";
+
+const GRAPHQL_URL = "http://localhost:9000/graphql";
+
+const httpLink = new HttpLink({ uri: GRAPHQL_URL });
+
+const wsLink = new GraphQLWsLink(
+  createWSClient({ url: "ws://localhost:9000/graphql" })
+);
+
+function isSubscription({ query }) {
+  // check if the GraphQL is a subscription to decide if use the WS or HTTP link
+  const definition = getMainDefinition(query);
+  return (
+    definition.kind === Kind.OPERATION_DEFINITION &&
+    definition.operation === OperationTypeNode.SUBSCRIPTION
+  );
+}
+
+export const client = new ApolloClient({
+  link: split(isSubscription, wsLink, httpLink), // works like and if
+  cache: new InMemoryCache(),
+});
+
+export default client;
+
+```
+
+### 5. Add the Subscription Query
+
+In client > queries.js:
+
+```
+export const MESSAGE_ADDED_SUBSCRIPTION = gql`
+  subscription MessageAddedSubscription {
+    message: messageAdded {
+      id
+      from
+      text
+    }
+  }
+`;
+
+```
+
+In client > hooks.js
+
+```
+import { useMutation, useQuery, useSubscription } from "@apollo/client";
+import { getAccessToken } from "../auth";
+import {
+  ADD_MESSAGE_MUTATION,
+  MESSAGES_QUERY,
+  MESSAGE_ADDED_SUBSCRIPTION,
+} from "./queries";
+
+export function useMessages() {
+  const { data } = useQuery(MESSAGES_QUERY, {
+    context: {
+      headers: { Authorization: "Bearer " + getAccessToken() },
+    },
+  });
+
+  useSubscription(MESSAGE_ADDED_SUBSCRIPTION, {
+    // we get notified of new messages
+    onSubscriptionData: ({ client, subscriptionData }) => {
+      console.log("subscription data: ", subscriptionData);
+      const message = subscriptionData.data.message;
+
+      // update local cache
+      client.cache.updateQuery({ query: MESSAGES_QUERY }, (oldData) => {
+        // append the new message to the list of messages
+        const newData = {
+          messages: [...oldData.messages, message],
+        };
+        return newData;
+      });
+    },
+  });
+
+  return {
+    messages: data?.messages ?? [],
+  };
+}
+
+
+```
+
+### 6. Add Authentication
+
+Only allow authenticated users to send messages.
+
+Http and WebSockets are different protocols, in WS we don't have the headers properties to send the auth token.
+
+That is one of the reasons why authentication is always a separate layer of our app.
+
+#### Update Frontend
+
+In Client > client.js
+
+```
+import { getAccessToken } from "../auth";
+
+const GRAPHQL_URL = "http://localhost:9000/graphql";
+
+const httpLink = new HttpLink({ uri: GRAPHQL_URL });
+
+const wsLink = new GraphQLWsLink(
+  createWSClient({
+    url: "ws://localhost:9000/graphql",
+    connectionParams: () => ({ accessToken: getAccessToken() }),
+  })
+);
+
+```
+
+We send teh token as a Connection Param, the token is send in the initial connection message.
+
+#### Update Backend
+
+We create a context for WebSockets requests.
+
+We use the connectionParams in the backend to get the access token passed in by the Frontend.
+
+Then we pass that information to the resolvers using a new context.
+
+In server.js:
+
+```
+function getHttpContext({ req }) {
+  if (req.auth) {
+    return { userId: req.auth.sub };
+  }
+  return {};
+}
+
+// new context for Web Sockets:
+
+function getWsContext({ connectionParams }) {
+  const token = connectionParams?.accessToken;
+  if (token) {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return { userId: payload.sub };
+  }
+  return {};
+}
+
+const httpServer = createHttpServer(app);
+const wsServer = new WebSocketServer({ server: httpServer, path: "/graphql" });
+
+const typeDefs = await readFile("./schema.graphql", "utf8");
+
+const schema = makeExecutableSchema({ typeDefs, resolvers });
+
+useWsServer({ schema, context: getWsContext }, wsServer);
+
+const apolloServer = new ApolloServer({
+  schema,
+  context: getHttpContext,
+});
+await apolloServer.start();
+apolloServer.applyMiddleware({ app, path: "/graphql" });
+```
+
+Then update the resolver to get the auth data from the context, and use it to reject or not the request.
+
+In resolver.js :
+
+```
+function rejectIf(condition) {
+  if (condition) {
+    throw new Error("Unauthorized");
+  }
+}
+
+
+export const resolvers = {
+
+  Subscription: {
+    messageAdded: {
+      subscribe: (_root, _args, context) => {
+        const { userId } = context;
+        rejectIf(!userId);
+        return pubSub.asyncIterator("MESSAGE_ADDED");
+      },
+    },
+  },
+};
+```

@@ -32,7 +32,11 @@ export const resolvers = {
 
   Subscription: {
     messageAdded: {
-      subscribe: () => pubSub.asyncIterator("MESSAGE_ADDED"),
+      subscribe: (_root, _args, context) => {
+        const { userId } = context;
+        rejectIf(!userId);
+        return pubSub.asyncIterator("MESSAGE_ADDED");
+      },
     },
   },
 };
