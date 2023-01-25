@@ -1,6 +1,10 @@
-import { useMutation, useQuery } from "@apollo/client";
+import { useMutation, useQuery, useSubscription } from "@apollo/client";
 import { getAccessToken } from "../auth";
-import { ADD_MESSAGE_MUTATION, MESSAGES_QUERY } from "./queries";
+import {
+  ADD_MESSAGE_MUTATION,
+  MESSAGES_QUERY,
+  MESSAGE_ADDED_SUBSCRIPTION,
+} from "./queries";
 
 export function useAddMessage() {
   const [mutate] = useMutation(ADD_MESSAGE_MUTATION);
@@ -12,20 +16,6 @@ export function useAddMessage() {
         variables: { input: { text } },
         context: {
           headers: { Authorization: "Bearer " + getAccessToken() },
-        },
-        update: (cache, result) => {
-          // update cache with the created message
-          const {
-            data: { message },
-          } = result;
-          // pass the query to update
-          cache.updateQuery({ query: MESSAGES_QUERY }, (oldData) => {
-            // update adding the new message.
-            const newData = {
-              messages: [...oldData.messages, message],
-            };
-            return newData;
-          });
         },
       });
       return message;
@@ -39,6 +29,24 @@ export function useMessages() {
       headers: { Authorization: "Bearer " + getAccessToken() },
     },
   });
+
+  useSubscription(MESSAGE_ADDED_SUBSCRIPTION, {
+    // we get notified of new messages
+    onSubscriptionData: ({ client, subscriptionData }) => {
+      console.log("subscription data: ", subscriptionData);
+      const message = subscriptionData.data.message;
+
+      // update local cache
+      client.cache.updateQuery({ query: MESSAGES_QUERY }, (oldData) => {
+        // append the new message to the list of messages
+        const newData = {
+          messages: [...oldData.messages, message],
+        };
+        return newData;
+      });
+    },
+  });
+
   return {
     messages: data?.messages ?? [],
   };
