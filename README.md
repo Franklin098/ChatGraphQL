@@ -4,6 +4,11 @@ FullStack Web App.
 
 The main purpose is to implement and explore graphQL subscriptions features.
 
+![](./images/graphql-chat-image-1.png)
+![](./images/graphql-chat-image-2.png)
+![](./images/graphql-chat-image-3.png)
+![](./images/graphql-chat-image-5.png)
+
 We can use the local cache that GraphQL provides to append the new messages that the users just sent. But we want to also receive real time updates, for that we need to use subscriptions.
 
 ### 1. Add your Subscription Schema
